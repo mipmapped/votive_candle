@@ -10,6 +10,8 @@ A magnet sensor (reed relay) is used to do a bettery check on multiple candles s
 
 Total COGS is about $3. Time per candle can be about 10 minutes with some planning (do each step to multiple candles before moving to next step).
 
+Just FYI, this is the candle holder used in our church (apparently the "go missing" on occasion): https://www.concordiasupply.com/15-Hour-Votive-Light-Glasses-Ruby-Pack-of-12.
+
 # Implementation
 The Homemory candle is simple. Just an LED (with flicker) and a battery. The "switch" simply moves one LED leg against the +ve side of the battery. The other LEG is bent under the -ve side of the batter and squished there with the battery cover.
 
