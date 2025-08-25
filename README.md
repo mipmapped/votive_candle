@@ -1,5 +1,5 @@
 # Votive Candle Timer
-Conversion of an on/off votive candle to a 2-hour single-shot candle using an ATtiny25/45/85 and a tilt sensor to turn on (or off) by simply inverting.
+Conversion of an on/off votive candle to a 2-hour single-shot timed candle using an ATtiny25/45/85 and a tilt sensor to turn on (or off) by simply inverting.
 A magnet sensor (reed relay) is used to do a bettery check on multiple candles simultaneously by illuminating each for 5s when a strong magnet is brought within a couple of inches - easy to waive over dozens of candles in a church environment (and an impressive demo).
 
 # BOM
