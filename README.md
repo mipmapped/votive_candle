@@ -4,7 +4,7 @@ A magnet sensor (reed relay) is used to do a bettery check on multiple candles s
 
 # BOM
 + Candle: Homemory 100 Pack Flickering Flameless Votive Candles https://www.amazon.com/dp/B0CY54HJ3H
-+ ATtiny25: I used a SOIC from Digikey
++ ATtiny25: I used a tube of 100 SOIC packaged devices from Digikey
 + Tilt Switch: A mercury tilt switch would have been ideal, but they are banned in CA. This one uses a two ball bearings. Gikfun Metal Ball Tilt Shaking Position Switches Sw-520d (Pack of 20pcs) https://www.amazon.com/dp/B00RGN0KY0
 + Reed Relay: Wave a magnet above the candles to do a battery check. https://www.amazon.com/dp/B00RGN0KY0
 
