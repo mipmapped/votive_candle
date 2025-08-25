@@ -20,3 +20,5 @@ I placed a label with a QR code of this Github repository on the inside of the c
 No code was written by me (or any other human). Instead it was Claud Sonnet 4 generted using requiremnts only. I clued the AI into using the watchdog timer and deep sleep mode for both when the LED is on and off. The watchdog timer allows it to wake up once a second to check the elapsed time when the LED is on.
 
 The ATtiny25 uses only 7uA in all states (apart from the infinetesimal time it wakes to check its timer). The LED takes about 1mA. It works down to below 3V, by which time the LED gets pretty dim (looks the same in this candle or an unmodified one). I figure it will last about a month in a church environment.
+
+Tip - use AVRDUDE to program multiple ATtiny25 devices rather than Arduino (which needs to rebuild each time).
