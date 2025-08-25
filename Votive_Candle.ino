@@ -3,75 +3,88 @@
 #include <avr/interrupt.h>
 #include <avr/power.h>
 
+/*
+AI Requirement:
+Write me some arduino code for attiny85. This uses three pins. PB0 is connected to a candle LED such that an output of 1 is on and 0, or set to input, it will be off. PB4 is an input connected to a tilt sensor and shall have an internal pullup. When tilted the pin will be low. PB3 shall be an input with an internal pullup. It will be connected to a reed relay such that when the relay is activated the pin will be 0.
+
+This design shall be optimized for low power and use sleep mode with WDT for timed sleeping. PB4 shall be used to wake from any sleep state.
+
+The code has three major states: LIT_TIMER, LIT_SHORT_TIMER and DEEP_SLEEP.
+
+When powered up the candle shall be on and enter the LIT_TIMER state.
+
+When the enters the LIT_TIMER state. It shall remain in this state for approximately 2 hours, at which time it will exit the state and turn off the candle. It shall use the WDT and wake states to do the timing and keep batter usage low. When in the state for greater than 0.5s and a transitions from untilted to tilted is sensed (as an interrupt) it will exit the state and turn the candle off.
+
+The code shall enter the DEEP_SLEEP state when the candle becomes unlit. In this state the candle pin shall change to an input to save power. When it has been in this state for more than 0.5s and the tilt state transitions from untilted to tilted (as an interrupt) it shall exit the state, turn on the candle and enter the LIT_TIMER state.
+
+If it is in the DEEP_SLEEP state and PB3 transitions low or high it shall turn the candle on and enter the LIT_SHORT_TIMER state. This state is similar to the LIT_TIMER state except that the time in this state is approximately 5 seconds. Entering this state shall light the candle. When the timer expires and the state exits the candle shall turn off and it shall enter the DEEP_SLEEP state.
+
+Claude Sonet 4 Repsonse:
+I'll create Arduino code that implements your three-state candle controller with the reed relay functionality on PB3.This code implements your three-state candle controller with reed relay functionality. Here are the key features:
+Three States:
+	• LIT_TIMER: Candle on for 2 hours, tilt after 0.5s turns off
+	• LIT_SHORT_TIMER: Candle on for 5 seconds, tilt after 0.5s turns off
+	• DEEP_SLEEP: Candle off (pin as input), responds to tilt (>0.5s) or reed transitions
+State Transitions:
+	1. Power-up: Candle on → LIT_TIMER state
+	2. LIT_TIMER: 
+		○ Timeout (2hrs) OR tilt (>0.5s) → candle off → DEEP_SLEEP
+	3. LIT_SHORT_TIMER: 
+		○ Timeout (5s) OR tilt (>0.5s) → candle off → DEEP_SLEEP
+	4. DEEP_SLEEP: 
+		○ Tilt (>0.5s) → candle on → LIT_TIMER
+		○ Reed transition (any time) → candle on → LIT_SHORT_TIMER
+Reed Relay Features:
+	• PB3 with internal pullup: Pin reads LOW when relay activated
+	• Any transition triggers: Both low→high and high→low activate the short timer
+	• Immediate response: No 0.5s delay requirement for reed transitions
+	• Priority handling: Reed transitions take precedence in DEEP_SLEEP state
+Key Technical Features:
+	• Pin change interrupts: Both PB4 (tilt) and PB3 (reed) wake from sleep
+	• Edge detection: Tilt only responds to untilted→tilted (HIGH→LOW)
+	• 0.5s protection: Uses stateTimeCounter to prevent immediate tilt responses
+	• Power optimization: 
+		○ Deep sleep with WDT timing
+		○ Candle pin becomes input when off
+		○ Disabled unused peripherals
+Operation Flow:
+	1. Normal cycle: LIT_TIMER (2hrs) ↔ DEEP_SLEEP
+	2. Reed activation: DEEP_SLEEP → LIT_SHORT_TIMER (5s) → DEEP_SLEEP
+	3. Tilt shortcuts: Can exit any lit state early (after 0.5s)
+	4. Low power: WDT wake-up, deep sleep between cycles
+The reed relay provides a convenient way to get a quick 5-second light without entering the full 2-hour cycle.
+*/
+
 // Pin definitions
 #define CANDLE_PIN PB0
 #define TILT_PIN PB4
-
-/*
-Alan Simmonds 2025-08-09
-All code written by Claude Sonnet 4 AI
-
-Promtp:
-Write me some arduino code for attiny85. This uses two pins. PB0 is connected to a candle LED such that an output of 1 is on and 0, or set to input, it will be off. PB4 is an input connected to a tilt sensor and shall have an internal pullup. When tilted the pin will be low. This design shall be optimized for low power and use sleep mode with WDT for timed sleeping. PB4 shall be used to wake from any sleep state.
-
-The code has two major states: LIT_TIMER and DEEP_SLEEP.
-
-When powered up the candle shall be on.
-
-When the candle becomes lit the code shall enter the LIT_TIMER state. It shall remain in this state for approximately 2 hours, at which time it will exit the state and turn off the candle. It shall use the WDT and wake states to do the timing and keep batter usage low. When in the state for greater than 0.5s and a transitions from untilted to tilted is sensed (as an interrupt) it will exit the state and turn the candle off.
-
-The code shall enter the DEEP_SLEEP state when the candle becomes unlit. In this state the candle pin shall change to an input to save power. When it has been in this state for more than 0.5s and the tilt state transitions from untilted to tilted (as an interrupt) it shall exit the state and turn on the candle.
-
-AI output:
-I'll create Arduino code that implements your simplified two-state system with the 0.5-second minimum time requirements for tilt responses.This code implements your simplified two-state candle controller with the following key features:
-Two Major States:
-	• LIT_TIMER: Candle on, 2-hour timeout with WDT timing
-	• DEEP_SLEEP: Candle off, candle pin as input for power savings
-State Transitions:
-	1. Power-up: Candle turns on → enters LIT_TIMER state
-	2. LIT_TIMER: 
-		○ Runs for 2 hours OR until tilt (if >0.5s in state)
-		○ Tilt or timeout → candle off → DEEP_SLEEP state
-	3. DEEP_SLEEP: 
-		○ Tilt after >0.5s in state → candle on → LIT_TIMER state
-Key Features:
-	• 0.5-second minimum: Uses stateTimeCounter to track time in current state, requires ≥1 WDT cycle (≥0.5s effective) before responding to tilts
-	• Edge detection: Only responds to untilted→tilted transitions (HIGH→LOW)
-	• Power optimization: 
-		○ Deep sleep with WDT wake-up
-		○ Candle pin becomes input in DEEP_SLEEP to eliminate current draw
-		○ Disabled ADC and unused peripherals
-	• Interrupt-based: Pin change interrupt works in all sleep modes
-Operation Flow:
-	1. Startup: Candle immediately on, enters LIT_TIMER
-	2. Normal cycle: LIT_TIMER (2hrs max) ↔ DEEP_SLEEP (indefinite)
-	3. Tilt protection: Ignores tilts for first 0.5s in each state
-	4. Low power: Uses WDT for timing, deep sleep between wake-ups
-The system is much simpler with just the two core states while maintaining all the power optimization and reliable tilt detection you requested.
-
-*/
+#define REED_PIN PB3
 
 // States
 enum State {
-  LIT_TIMER,     // Timed lit state (2 hours)
-  DEEP_SLEEP     // Deep sleep state
+  LIT_TIMER,       // Long timed lit state (2 hours)
+  LIT_SHORT_TIMER, // Short timed lit state (5 seconds)
+  DEEP_SLEEP       // Deep sleep state
 };
 
 // Global variables
 volatile State currentState = LIT_TIMER;
 volatile bool tiltTransitionDetected = false;
+volatile bool reedTransitionDetected = false;
 volatile bool previousTiltState = HIGH;       // Track previous state for edge detection
+volatile bool previousReedState = HIGH;       // Track previous reed state
 volatile uint16_t wdtCounter = 0;
 volatile uint16_t stateTimeCounter = 0;       // Track time in current state
 
 // Timing constants
 const uint16_t LIT_TIMEOUT_SECONDS = 7200;    // 2 hours
-//const uint16_t LIT_TIMEOUT_SECONDS = 20;    // 2 hours
+const uint16_t LIT_SHORT_TIMEOUT_SECONDS = 5; // 5 seconds
 const uint16_t MIN_STATE_TIME_SECONDS = 1;    // 0.5s minimum (using 1s WDT, so 1 cycle minimum)
 const uint8_t WDT_CYCLES_PER_SECOND = 1;      // Using 1s WDT timeout
 
 // WDT timeout tracking
 const uint16_t LIT_WDT_CYCLES = LIT_TIMEOUT_SECONDS * WDT_CYCLES_PER_SECOND;
+const uint16_t LIT_SHORT_WDT_CYCLES = LIT_SHORT_TIMEOUT_SECONDS * WDT_CYCLES_PER_SECOND;
 const uint16_t MIN_STATE_WDT_CYCLES = MIN_STATE_TIME_SECONDS * WDT_CYCLES_PER_SECOND;
 
 void setup() {
@@ -83,18 +96,21 @@ void setup() {
   // Configure pins
   pinMode(CANDLE_PIN, OUTPUT);
   pinMode(TILT_PIN, INPUT_PULLUP);
+  pinMode(REED_PIN, INPUT_PULLUP);
   
-  // Turn on candle initially (becomes lit)
+  // Turn on candle initially and enter LIT_TIMER
   digitalWrite(CANDLE_PIN, HIGH);
   
-  // Initialize tilt state tracking
+  // Initialize state tracking
   previousTiltState = digitalRead(TILT_PIN);
+  previousReedState = digitalRead(REED_PIN);
   
-  // Setup pin change interrupt for tilt sensor (PB4)
+  // Setup pin change interrupts for both tilt sensor (PB4) and reed relay (PB3)
   GIMSK |= (1 << PCIE);     // Enable pin change interrupts
-  PCMSK |= (1 << PCINT4);   // Enable interrupt on PB4
+  PCMSK |= (1 << PCINT4);   // Enable interrupt on PB4 (tilt)
+  PCMSK |= (1 << PCINT3);   // Enable interrupt on PB3 (reed)
   
-  // Initialize state - candle becomes lit, so enter LIT_TIMER
+  // Initialize state - candle is lit, so enter LIT_TIMER
   currentState = LIT_TIMER;
   wdtCounter = 0;
   stateTimeCounter = 0;
@@ -112,6 +128,10 @@ void loop() {
       handleLitTimerState();
       break;
       
+    case LIT_SHORT_TIMER:
+      handleLitShortTimerState();
+      break;
+      
     case DEEP_SLEEP:
       handleDeepSleepState();
       break;
@@ -127,10 +147,13 @@ void handleLitTimerState() {
     return;
   }
   
-  // Clear transition flag if we haven't been in state long enough
+  // Clear transition flags if we haven't been in state long enough
   if (tiltTransitionDetected && stateTimeCounter < MIN_STATE_WDT_CYCLES) {
     tiltTransitionDetected = false;
   }
+  
+  // Clear any reed transitions (not used in this state)
+  reedTransitionDetected = false;
   
   // Check if lit timeout reached (2 hours) - turn off and enter deep sleep
   if (wdtCounter >= LIT_WDT_CYCLES) {
@@ -139,11 +162,47 @@ void handleLitTimerState() {
     return;
   }
   
-  // Go to sleep and wait for WDT or tilt interrupt
+  // Go to sleep and wait for WDT or interrupt
+  enterLightSleep();
+}
+
+void handleLitShortTimerState() {
+  // Check if tilt transition detected and we've been in state > 0.5s
+  if (tiltTransitionDetected && stateTimeCounter >= MIN_STATE_WDT_CYCLES) {
+    tiltTransitionDetected = false;
+    turnOffCandle();
+    enterDeepSleepState();
+    return;
+  }
+  
+  // Clear transition flags if we haven't been in state long enough
+  if (tiltTransitionDetected && stateTimeCounter < MIN_STATE_WDT_CYCLES) {
+    tiltTransitionDetected = false;
+  }
+  
+  // Clear any reed transitions (not used in this state)
+  reedTransitionDetected = false;
+  
+  // Check if short lit timeout reached (5 seconds) - turn off and enter deep sleep
+  if (wdtCounter >= LIT_SHORT_WDT_CYCLES) {
+    turnOffCandle();
+    enterDeepSleepState();
+    return;
+  }
+  
+  // Go to sleep and wait for WDT or interrupt
   enterLightSleep();
 }
 
 void handleDeepSleepState() {
+  // Check if reed transition detected - turn on candle and enter LIT_SHORT_TIMER
+  if (reedTransitionDetected) {
+    reedTransitionDetected = false;
+    turnOnCandle();
+    enterLitShortTimerState();
+    return;
+  }
+  
   // Check if tilt transition detected and we've been in state > 0.5s
   if (tiltTransitionDetected && stateTimeCounter >= MIN_STATE_WDT_CYCLES) {
     tiltTransitionDetected = false;
@@ -177,6 +236,13 @@ void enterLitTimerState() {
   setupWDT();              // Enable WDT for timing
 }
 
+void enterLitShortTimerState() {
+  currentState = LIT_SHORT_TIMER;
+  wdtCounter = 0;          // Reset short lit timer
+  stateTimeCounter = 0;    // Reset state time counter
+  setupWDT();              // Enable WDT for timing
+}
+
 void enterDeepSleepState() {
   currentState = DEEP_SLEEP;
   stateTimeCounter = 0;    // Reset state time counter
@@ -187,8 +253,9 @@ void enterDeepSleep() {
   // Change candle pin to input to save power (candle is off)
   pinMode(CANDLE_PIN, INPUT);
   
-  // Update tilt state before sleeping
+  // Update pin states before sleeping
   previousTiltState = digitalRead(TILT_PIN);
+  previousReedState = digitalRead(REED_PIN);
   
   // Enter deepest sleep mode
   set_sleep_mode(SLEEP_MODE_PWR_DOWN);
@@ -198,8 +265,9 @@ void enterDeepSleep() {
 }
 
 void enterLightSleep() {
-  // Update tilt state before sleeping
+  // Update pin states before sleeping
   previousTiltState = digitalRead(TILT_PIN);
+  previousReedState = digitalRead(REED_PIN);
   
   // Use power-down mode (WDT will still wake us up)
   set_sleep_mode(SLEEP_MODE_PWR_DOWN);
@@ -220,18 +288,25 @@ void setupWDT() {
   sei();
 }
 
-// Pin change interrupt service routine (tilt sensor)
+// Pin change interrupt service routine (tilt sensor and reed relay)
 ISR(PCINT0_vect) {
-  // Read current tilt state
+  // Read current pin states
   bool currentTiltState = digitalRead(TILT_PIN);
+  bool currentReedState = digitalRead(REED_PIN);
   
-  // Check for transition from untilted (HIGH) to tilted (LOW)
+  // Check for tilt transition from untilted (HIGH) to tilted (LOW)
   if (previousTiltState == HIGH && currentTiltState == LOW) {
     tiltTransitionDetected = true;
   }
   
-  // Update previous state
+  // Check for reed transition (any change - low to high or high to low)
+  if (previousReedState != currentReedState) {
+    reedTransitionDetected = true;
+  }
+  
+  // Update previous states
   previousTiltState = currentTiltState;
+  previousReedState = currentReedState;
 }
 
 // Watchdog timer interrupt service routine
@@ -239,13 +314,14 @@ ISR(WDT_vect) {
   // Always increment state time counter
   stateTimeCounter++;
   
-  // Increment lit timer only when in LIT_TIMER state
-  if (currentState == LIT_TIMER) {
+  // Increment appropriate timer based on current state
+  if (currentState == LIT_TIMER || currentState == LIT_SHORT_TIMER) {
     wdtCounter++;
   }
   
-  // Update tilt state tracking after wake-up
+  // Update pin state tracking after wake-up
   previousTiltState = digitalRead(TILT_PIN);
+  previousReedState = digitalRead(REED_PIN);
   
   // WDT interrupt automatically wakes from sleep
 }
